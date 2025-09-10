@@ -216,9 +216,14 @@ class DesignEditor : LinearLayout {
                 when (event.action) {
                     DragEvent.ACTION_DRAG_STARTED -> {
                         if (isEnableVibration) VibrateUtils.vibrate(100)
-                        if ((draggedView != null
-                                    && !(draggedView is AdapterView<*> && parent is AdapterView<*>))
-                        ) parent.removeView(draggedView)
+                        if (draggedView != null) {
+                            val srcParent = draggedView.parent as? ViewGroup
+                            if (srcParent is AdapterView<*>) {
+                                draggedView.visibility = View.INVISIBLE
+                            } else {
+                                srcParent?.removeView(draggedView)
+                            }
+                        }
                     }
 
                     DragEvent.ACTION_DRAG_EXITED -> {
@@ -226,32 +231,39 @@ class DesignEditor : LinearLayout {
                         updateUndoRedoHistory()
                     }
 
-                    DragEvent.ACTION_DRAG_ENDED -> if (!event.result && draggedView != null) {
-                        removeId(draggedView, draggedView is ViewGroup)
-                        removeViewAttributes(draggedView)
-                        viewAttributeMap.remove(draggedView)
-                        updateStructure()
+                    DragEvent.ACTION_DRAG_ENDED -> {
+                        if (!event.result && draggedView != null) {
+                            val srcParent = draggedView.parent
+                            if (srcParent is AdapterView<*>) {
+                                draggedView.visibility = View.VISIBLE
+                            } else if (srcParent == null) {
+                                removeId(draggedView, draggedView is ViewGroup)
+                                removeViewAttributes(draggedView)
+                                viewAttributeMap.remove(draggedView)
+                                updateStructure()
+                            }
+                        }
                     }
 
-                    DragEvent.ACTION_DRAG_LOCATION, DragEvent.ACTION_DRAG_ENTERED -> if (shadow.parent == null) addWidget(
-                        shadow,
-                        parent,
-                        event
-                    )
-                    else {
-                        if (parent is LinearLayout) {
-                            val index = parent.indexOfChild(shadow)
-                            val newIndex = getIndexForNewChildOfLinear(parent, event)
+                    DragEvent.ACTION_DRAG_LOCATION, DragEvent.ACTION_DRAG_ENTERED -> {
+                        if (parent is AdapterView<*>) return@OnDragListener true
 
-                            if (index != newIndex) {
-                                parent.removeView(shadow)
-                                try {
-                                    parent.addView(shadow, newIndex)
-                                } catch (_: IllegalStateException) {
+                        if (shadow.parent == null) addWidget(shadow, parent, event)
+                        else {
+                            if (parent is LinearLayout) {
+                                val index = parent.indexOfChild(shadow)
+                                val newIndex = getIndexForNewChildOfLinear(parent, event)
+
+                                if (index != newIndex) {
+                                    parent.removeView(shadow)
+                                    try {
+                                        parent.addView(shadow, newIndex)
+                                    } catch (_: IllegalStateException) {
+                                    }
                                 }
+                            } else {
+                                if (shadow.parent !== parent) addWidget(shadow, parent, event)
                             }
-                        } else {
-                            if (shadow.parent !== parent) addWidget(shadow, parent, event)
                         }
                     }
 
@@ -261,16 +273,29 @@ class DesignEditor : LinearLayout {
                             if (getChildAt(0) !is ViewGroup) {
                                 Toast.makeText(
                                     context,
-                                    "Can\'t add more than one widget in the editor.",
+                                    "Can't add more than one widget in the editor.",
                                     Toast.LENGTH_SHORT
                                 ).show()
+                                draggedView?.visibility = View.VISIBLE
                                 return@OnDragListener true
                             } else {
                                 if (parent is DesignEditor) parent = getChildAt(0) as ViewGroup
                             }
                         }
+
+                        if (parent is AdapterView<*>) {
+                            Toast.makeText(
+                                context,
+                                "Can't drop into AdapterView (ListView/GridView/Spinner).",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            draggedView?.visibility = View.VISIBLE
+                            return@OnDragListener true
+                        }
+
                         if (draggedView == null) {
-                            @Suppress("UNCHECKED_CAST") val data: HashMap<String, Any> =
+                            @Suppress("UNCHECKED_CAST")
+                            val data: HashMap<String, Any> =
                                 event.localState as HashMap<String, Any>
                             val newView =
                                 InvokeUtil.createView(
@@ -323,7 +348,21 @@ class DesignEditor : LinearLayout {
                                     newView, data[Constants.KEY_DEFAULT_ATTRS] as MutableMap<String, String>
                                 )
                             }
-                        } else addWidget(draggedView, parent, event)
+                        } else {
+                            val srcParent = draggedView.parent
+                            if (srcParent is AdapterView<*>) {
+                                Toast.makeText(
+                                    context,
+                                    "Can't move items out of AdapterView.",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                draggedView.visibility = View.VISIBLE
+                                return@OnDragListener true
+                            }
+
+                            addWidget(draggedView, parent, event)
+                            draggedView.visibility = View.VISIBLE
+                        }
                         updateStructure()
                         updateUndoRedoHistory()
                     }
@@ -457,10 +496,16 @@ class DesignEditor : LinearLayout {
     }
 
     private fun addWidget(view: View, newParent: ViewGroup, event: DragEvent) {
+        if (newParent is AdapterView<*>) return
+
         removeWidget(view)
         if (newParent is LinearLayout) {
             val index = getIndexForNewChildOfLinear(newParent, event)
-            newParent.addView(view, index)
+            try {
+                newParent.addView(view, index)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         } else {
             try {
                 newParent.addView(view, newParent.childCount)
@@ -471,7 +516,12 @@ class DesignEditor : LinearLayout {
     }
 
     private fun removeWidget(view: View) {
-        (view.parent as ViewGroup?)?.removeView(view)
+        val p = view.parent as? ViewGroup ?: return
+        if (p is AdapterView<*>) {
+            view.visibility = View.GONE
+            return
+        }
+        p.removeView(view)
     }
 
     private fun getIndexForNewChildOfLinear(layout: LinearLayout, event: DragEvent): Int {
@@ -763,7 +813,6 @@ class DesignEditor : LinearLayout {
             target.id = -1
             target.requestLayout()
 
-            // delete all id attributes for views
             for (view: View in viewAttributeMap.keys) {
                 val map = viewAttributeMap[view]
 
@@ -779,7 +828,17 @@ class DesignEditor : LinearLayout {
 
         viewAttributeMap.remove(target)
 
-        val parent = target.parent as ViewGroup
+        val parent = target.parent as? ViewGroup ?: return target
+        if (parent is AdapterView<*>) {
+            Toast.makeText(
+                context,
+                "Editing this attribute is not supported for views inside AdapterView.",
+                Toast.LENGTH_SHORT
+            ).show()
+            viewAttributeMap[target] = attributeMap
+            return target
+        }
+
         val indexOfView = parent.indexOfChild(target)
 
         parent.removeView(target)
