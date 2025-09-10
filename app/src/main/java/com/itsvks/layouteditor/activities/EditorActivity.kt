@@ -117,7 +117,13 @@ class EditorActivity : BaseActivity() {
 
         projectManager = ProjectManager.instance
 
-        project = projectManager.openedProject!!
+        val opened = projectManager.openedProject
+        if (opened == null) {
+            Toast.makeText(this, "No project opened. Please open or create a project first.", Toast.LENGTH_LONG).show()
+            finish()
+            return
+        }
+        project = opened
 
         supportActionBar?.title = project.name
         layoutAdapter = LayoutListAdapter(project)
